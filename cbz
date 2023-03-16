@@ -1,0 +1,103 @@
+#!/bin/bash
+
+function fix_chapter_numbers() {
+  N=$(ls | sed "s/[^0-9]*//" | sed "s/[^0-9].*//" | wc -L)
+  for oname in *; do
+    nname=$(echo $oname | sed -r ":r;s/\b[0-9]{1,$(($N-1))}\b/0&/;tr")
+    nname=$(echo $nname | sed 's/\([0-9]\+\)[.-~]\+0*\([1-9]\)\./\1~\2./')
+    echo $oname '->' $nname
+    mv "$oname" "$nname" 2> /dev/null
+  done
+}
+
+function merge() {
+  local manga_name="$1"
+  local manga_input="$1"
+  local manga_output="$1-merged/"
+  mkdir "$manga_output"
+  rm "$manga_output"/* -rf
+  local i=0
+  local total_volumes=$(ls "$manga_input" | wc -l)
+  for vol in "$manga_input"/*; do
+    local print_i=$(printf "%0${#total_volumes[@]}d" $i)
+    echo "[$print_i/$total_volumes] $vol" >&2
+    local extract_output=$(extract_multiple "$vol" "$manga_output")
+    merge_volume "$extract_output" "$manga_name"
+    local i=$(("$i"+1))
+  done
+}
+
+function merge_volume() {
+  local volume_path="$1"
+  local volume_name="$2"
+  pushd "$volume_path" > /dev/null
+  local n_pages=$(ls ./ | egrep "\.(jpg|png)" 2> /dev/null | wc -l)
+  zip "$volume_name.cbz" ./*.{jpg,png} > /dev/null
+  rm ./*.{jpg,png} 2> /dev/null
+  popd > /dev/null
+}
+
+function extract_multiple() {
+  local from="$1"
+  local to="$2"
+
+  if [ -d "$from" ]; then
+    local output="$to"/$(basename "$from")
+    rm -rf "$output"
+    mkdir "$output"
+    for chap in "$from"/*; do
+      extract_single "$chap" "$output"
+    done
+  else
+    extract_single "$from" "$to"
+  fi
+}
+
+function check_for_cover() {
+  local from=$1
+  local to=$2
+  local input="$from"/$(ls "$from" | grep 'cover' | head -1)
+  if [ -f "$input" ]; then
+    local output="$to"/$(basename "$input")
+    cp "$input" "$output"
+    if [ -z $(echo $output | grep '\.(jpg|png)') ]; then
+      mogrify -format jpg "$output"
+      rm "$output"
+      local output="$to"/$(ls "$to" | grep 'cover' | head -1)
+    fi
+    mv "$output" "$to/0.jpg"
+  fi
+}
+
+
+function extract_single() {
+  local from="$1"
+  local to="$2"
+  if file "$1" | grep 'Zip' > /dev/null; then
+    echo "extracting chapter from $1 to $2"
+    filename=$(basename "$chapter_from")
+    chapter=$(echo "$filename" | sed 's/[^0-9]*\([0-9]*[^0-9]*[0-9]*\).*.cbz/\1/')
+    if echo "$chapter_from" | grep unpublished > /dev/null; then
+      cp "$chapter_from" "$chapter_to"
+    else
+      zipinfo -2 "$chapter_from" | while read page; do
+        unzip -p -c "$chapter_from" "$page" > "$chapter_to/$chapter-$page"
+      done
+    fi
+  fi
+}
+
+function put_in_volume() {
+  local vol_number=$1
+  if [ "$vol_number" = "--auto" ]; then
+    local volumes=$(ls | grep volume | wc -l)
+    local vol_number=$(($volumes+1))
+  fi
+  local folder_name="volume_"$(printf "%02d" "$vol_number")
+  local chapters=${@:2}
+
+  mkdir "$folder_name"
+  for chapter in $chapters; do
+      mv "$chapter" "$folder_name"
+  done
+}
